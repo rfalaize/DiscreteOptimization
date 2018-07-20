@@ -1,7 +1,9 @@
 #!/usr/bin/python
 # -*- coding: utf-8 -*-
 
+import sys
 import os
+import pandas as pd
 from subprocess import Popen, PIPE
 
 def solve_it(input_data):
@@ -29,11 +31,30 @@ def solve_it(input_data):
     # removes the temporay files
     os.remove(tmp_input_file_name)
     os.remove(tmp_output_file_name)
-		
+
     return results
 
-
-import sys
+def branchAndBound(input_data):
+    # relax problem to continuous values between 0 and 1
+    df = pd.DataFrame(
+        {'value': input_data[:, 0],
+         'weight': input_data[:, 1]
+        })
+    df['relativeValue'] = df['value'] / df['weight']
+    df['X'] = 0
+    df = df.sort_values(by=['relativeValue'], ascending=False)
+    # pick all items until the capacity of the knapsack is exhausted
+    totalValue = 0
+    filledCapacity = 0
+    remainingCapacity = K
+    for index, row in df.iterrows():
+        if row['weight'] < remainingCapacity:
+            row['X'] = 1
+            totalValue += row['value']
+            filledCapacity += row['weight']
+            remainingCapacity -= row['weight']
+    print('Objective: ', totalValue)
+    print('Variables: ', df['X'])
 
 if __name__ == '__main__':
     if len(sys.argv) > 1:
