@@ -1,70 +1,86 @@
 #!/usr/bin/python
 # -*- coding: utf-8 -*-
 
+from __future__ import print_function
 import sys
 import os
-import pandas as pd
 from subprocess import Popen, PIPE
+from ortools.linear_solver import pywraplp
+from datetime import datetime
 
-def solve_it(input_data):
+def GetInputs(input_data):
+    input_data = input_data.splitlines()
+    input_data = [list(map(int, x.split(' ')))  for x in input_data]
+    inputs={}
+    inputs['size'] = input_data[0][0]
+    inputs['capacity'] = input_data[0][1]
+    inputs['values'] = [row[0] for row in input_data[1:]]
+    inputs['weights'] = [row[1] for row in input_data[1:]]
+    return inputs
 
-    print("Writes the inputData to a temporay file...")
-    tmp_input_file_name = 'input.txt'
-    tmp_input_file = open(tmp_input_file_name, 'w')
-    tmp_input_file.write(input_data)
-    tmp_input_file.close()
+def LogInfo(msg):
+    print(datetime.now().strftime('%H:%M:%S') + ' - ' + msg)
+    
+def SolveWithORTools(input_data):
+    # Get inputs
+    inputs = GetInputs(input_data)
 
-    print("Start slave solver process...")
-    process = Popen(['C:/Users/rhome/github/DiscreteOptimization/Solver/Solver/bin/x64/Release/Solver.exe', 'knapsack', tmp_input_file_name], stdout=PIPE)
-    (stdout, stderr) = process.communicate()
+    # Solver
+    # options: GLOP_LINEAR_PROGRAMMING, CBC_MIXED_INTEGER_PROGRAMMING
+    solver = pywraplp.Solver('KnapsackSolver', pywraplp.Solver.CBC_MIXED_INTEGER_PROGRAMMING)
 
-    print("Get results...")
-    tmp_output_file_name = 'output.txt'
-    tmp_output_file = open(tmp_output_file_name, 'r')
-    results = tmp_output_file.read()
-    print("Results:")
-    print("***************************************************************")
+    # Objective function: maximize the value of the knapsack
+    objective = solver.Objective()
+    objective.SetMaximization()
+
+    # Constraint on capacity
+    constraint = solver.Constraint(0, inputs['capacity'])
+        
+    # Variables
+    variables = []
+    for i in range(inputs['size']):
+        x = solver.BoolVar('x' + str(i))
+        variables.append(x)
+        # add to constraint
+        constraint.SetCoefficient(x, inputs['weights'][i])
+        # add to objective
+        objective.SetCoefficient(x, inputs['values'][i])
+
+    # Solve
+    LogInfo('Start solving...')
+    solver.Solve()
+    LogInfo('Solver finished.')
+
+    results = []
+    for i in range(inputs['size']):
+        results.append(int(variables[i].solution_value()))
+    objectiveValue = objective.Value()    
+
+    # Results
+    print('Number of variables =', solver.NumVariables())
+    print('Number of constraints =', solver.NumConstraints())
+    print('x = ', results)
+    print('Optimal objective value =', objectiveValue)
+
+    outputs = {}
+    outputs['objective'] = int(objectiveValue)
+    outputs['variables'] = results
+
+    # Return
+    results = str(outputs['objective']) + ' 0\n' + ' '.join(map(str, outputs['variables'])) 
+    print('****************************************************')
     print(results)
-    print("***************************************************************")
-    tmp_output_file.close()
-
-    # removes the temporay files
-    os.remove(tmp_input_file_name)
-    os.remove(tmp_output_file_name)
-
     return results
 
-def branchAndBound(input_data):
-    # relax problem to continuous values between 0 and 1
-    df = pd.DataFrame(
-        {'value': input_data[:, 0],
-         'weight': input_data[:, 1]
-        })
-    df['relativeValue'] = df['value'] / df['weight']
-    df['X'] = 0
-    df = df.sort_values(by=['relativeValue'], ascending=False)
-    # pick all items until the capacity of the knapsack is exhausted
-    totalValue = 0
-    filledCapacity = 0
-    remainingCapacity = K
-    for index, row in df.iterrows():
-        if row['weight'] < remainingCapacity:
-            row['X'] = 1
-            totalValue += row['value']
-            filledCapacity += row['weight']
-            remainingCapacity -= row['weight']
-    print('Objective: ', totalValue)
-    print('Variables: ', df['X'])
-
+def solve_it(input_data):
+    results = SolveWithORTools(input_data)
+    return results
+    
 if __name__ == '__main__':
     if len(sys.argv) > 1:
         file_location = sys.argv[1].strip()
         with open(file_location, 'r') as input_data_file:
             input_data = input_data_file.read()
-        print("Input data:")
-        print("***************************************************************")
-        print(input_data)
-        print("***************************************************************")
         solve_it(input_data)
     else:
         print('This test requires an input file.  Please select one from the data directory. (i.e. python solver.py ./data/ks_4_0)')
