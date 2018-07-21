@@ -21,7 +21,7 @@ def GetInputs(input_data):
 def LogInfo(msg):
     print(datetime.now().strftime('%H:%M:%S') + ' - ' + msg)
     
-def SolveWithORTools(input_data):
+def SolveWithORToolsMIP(input_data):
     # Get inputs
     inputs = GetInputs(input_data)
 
@@ -72,8 +72,32 @@ def SolveWithORTools(input_data):
     print(results)
     return results
 
+def SolveWithORToolsBinPacking(input_data):
+    # Get inputs
+    inputs = GetInputs(input_data)
+    # Create the solver
+    from ortools.algorithms import pywrapknapsack_solver
+    solver = pywrapknapsack_solver.KnapsackSolver(
+        pywrapknapsack_solver.KnapsackSolver.KNAPSACK_MULTIDIMENSION_BRANCH_AND_BOUND_SOLVER,
+        'knapsack')
+    solver.Init(inputs['values'], [inputs['weights']], [inputs['capacity']])
+    objectiveValue = solver.Solve()
+    results = [int(solver.BestSolutionContains(x)) for x in range(inputs['size'])]
+    objective = sum([x*v for x,v in zip(inputs['values'], results)])
+    print('x = ', results)
+    print('Optimal objective value =', objectiveValue)
+    outputs = {}
+    outputs['objective'] = int(objectiveValue)
+    outputs['variables'] = results
+    # Return
+    results = str(outputs['objective']) + ' 1\n' + ' '.join(map(str, outputs['variables'])) 
+    print('****************************************************')
+    print(results)
+    return results
+
 def solve_it(input_data):
-    results = SolveWithORTools(input_data)
+    #results = SolveWithORToolsMIP(input_data)
+    results = SolveWithORToolsBinPacking(input_data)
     return results
     
 if __name__ == '__main__':
