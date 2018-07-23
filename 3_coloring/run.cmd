@@ -4,7 +4,7 @@ set PATH=%PATH%;%PYTHONDIR%;%PYTHONDIR%\Scripts\
 
 rem start jupyter...
 ::%PYTHONDIR%\python.exe ./solver.py ./data/ks_10000_0
-%PYTHONDIR%\python.exe ./submit.py
-::jupyter-notebook.exe
+::%PYTHONDIR%\python.exe ./submit.py
+jupyter-notebook.exe
 
 pause
