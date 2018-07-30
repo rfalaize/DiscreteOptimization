@@ -17,6 +17,7 @@ def GetInputs(input_data):
     inputs={}
     inputs['nbnodes'] = input_data[0][0]
     inputs['nbedges'] = input_data[0][1]
+    LogInfo('nbnodes=' + str(inputs['nbnodes']) + '; nbedges=' + str(inputs['nbedges']))
     inputs['startnodes'] = [row[0] for row in input_data[1:]]
     inputs['endnodes'] = [row[1] for row in input_data[1:]]
     adjacentnodes = {}
@@ -38,11 +39,58 @@ def GetInputs(input_data):
     inputs['adjacentnodes'] = adjacentnodes
     return inputs
 
-def RunGreedyAlgorithm(inputNodes, inputs):
+# function to get the lower bounds of possible colors
+# example: GetGraphColoringLowerBound(GetInputs(ReadFile('data/a_4')), 0)
+def GetGraphColoringLowerBound(inputs, node):
+    neighbors = inputs['adjacentnodes'][node]
+    # print('neighbors of ', node, ': ',neighbors)
+    neighborsColors = {}
+    minColors = 1
+    maxColors = 0
+    uboundColors = 1 + len(neighbors)
+    for n in neighbors:
+        neighborsneighbors = inputs['adjacentnodes'][n]
+        for c in range(1, uboundColors):
+            isAvailable = True
+            for nn in neighborsneighbors:
+                # if the neighbor's neighbor is already assigned to color c,
+                # then flag it as unavailable
+                if nn in neighborsColors:
+                    if neighborsColors[nn] == c:
+                        isAvailable = False
+                        break
+            if isAvailable:
+                neighborsColors[n] = c
+                if c > maxColors:
+                    maxColors = c
+                # print('color ', c, ' assigned to neighbor ', n)
+                break
+    return maxColors + 1
+
+# function to run the algorithm for a given, ordered, list of nodes 
+def RunGreedyAlgorithm(inputs):
+    LogInfo('Start greedy algo...')
     nodecolors = {}
 
-    # loop on each node
-    for node in inputs['nodes']:
+    inputNodes = inputs['nodes']
+    
+    # sort nodes based on their number of neighbors.
+    # nodes with more neighbors will have priority during color assignment
+    LogInfo('Sorting nodes...')
+    sortedNodesDict = {}
+    maxneighbors = 0
+    for k, v in inputs['adjacentnodes'].items():
+        nbneighbors = len(v)
+        sortedNodesDict[k] = nbneighbors
+    sortedNodesDict = sorted(sortedNodesDict.items(), key=lambda x: x[1])
+    sortedNodes = []
+    for n in sortedNodesDict:
+        sortedNodes.append(n[0])
+    sortedNodes = sortedNodes[::-1]
+    inputNodes = sortedNodes
+    
+    LogInfo('Loop on each node...')
+    for node in inputNodes:
         #print('>> Node ', node)
         for color in inputs['colors']:
             #print('    >> Color ', color)
@@ -52,7 +100,6 @@ def RunGreedyAlgorithm(inputNodes, inputs):
 
             if node not in inputs['adjacentnodes']:
                 # if the node doesn't have any adjacent nodes, assign the first available color
-                print('does not have any neighboors')
                 nodecolors[node] = color
                 break
 
@@ -75,134 +122,89 @@ def RunGreedyAlgorithm(inputNodes, inputs):
     return output
 
 def RunSolver(inputs):
-    from ortools.constraint_solver import pywrapcp
-
-    # Creates the solver
-    solver = pywrapcp.Solver("GraphColoring")
-
-    # run greedy algorithm first, to find an upper bound on the number of required colors
-    greedyoutputs = RunGreedyAlgorithm(inputs['nodes'], inputs)
-    print('Greedy objective: ', greedyoutputs['objective'])
-		
-    # Creates the variables
-    variables = []
-    for i in range(inputs['nbnodes']):
-        # x = solver.IntVar(0, inputs['nbnodes'] - 1, "x" + str(i))
-        x = solver.IntVar(0, greedyoutputs['objective'] - 1, "x" + str(i))
-        variables.append(x)
-
-    # Create the constraints
-    for edge in range(inputs['nbedges']):
-        # get variables corresponding to start and end nodes
-        snode = inputs['startnodes'][edge]
-        enode = inputs['endnodes'][edge]
-        #print('Adding constraint: ', snode, ' != ', enode)
-        xs = variables[snode]
-        xe = variables[enode]
-        solver.Add(xs != xe)
-        
-    # Create the decision builder
-    db = solver.Phase(variables, solver.CHOOSE_FIRST_UNBOUND, solver.ASSIGN_MIN_VALUE)
-
-    # Start solving
-    starttime = datetime.now()
-    solver.Solve(db)
-
-    count = 0
-    outputs = {}
-    while solver.NextSolution():
-        count += 1
-        # get variable values
-        results = []
-        for x in variables:
-            results.append(x.Value())
-        objective = len(set(results))
-        if outputs == {}:
-            outputs['objective'] = objective
-            outputs['variables'] = results
-        elif objective < outputs['objective']:
-            outputs['objective'] = objective
-            outputs['variables'] = results
-        if (count % 100000) == 0:
-            LogInfo("Solution " + str(count) + '; objective=' + str(outputs['objective']))
-
-    print('Run took ' + str(datetime.now() - starttime))
-    print(count, ' solutions scanned.')
-    return outputs
-
-def RunLinearSolver(inputs):
     from ortools.linear_solver import pywraplp
 
     solver = pywraplp.Solver('GraphColoringSolver', pywraplp.Solver.CBC_MIXED_INTEGER_PROGRAMMING)
+
+    # Run greedy algorithm first to determine lower and upper bound on the number of colors,
+    # in order to reduce the search space
+    greedyoutputs = RunGreedyAlgorithm(inputs)
+    mincolors = 0
+    maxcolors = greedyoutputs['objective']
+    colorsrange = range(maxcolors)
+    LogInfo('Greedy outputs: mincolors=' + str(mincolors) + '; maxcolors=' + str(maxcolors))
 
     # Objective function: minimize y (cap)
     objective = solver.Objective()
     objective.SetMinimization()
 
-    # Constraints
-    # ************************************************************
-
-    # constraint 1): cap
-    # Add an artifical cap variable, y, that will be superior to the maximum color of the graph.
-    # Minimizing y will squash the max color to its minimal possible value, which is 
-    # equivalent to finding the optimal graph coloring. 
-    constraint_cap = solver.Constraint(0, solver.infinity()) 
-
     # Variables
-    y = solver.IntVar(0.0, inputs['nbnodes'], 'y')
-    constraint_cap.SetCoefficient(y, 1)
+    y = solver.IntVar(mincolors, maxcolors, 'y')
     objective.SetCoefficient(y, 1)
 
+    LogInfo('Add variables...')
     variables = []
     for n in range(inputs['nbnodes']):
-        # constraint 2): each node must be assigned a unique color
+        # constraint 1): each node must be assigned a unique color
         constraint_unique_node_color = solver.Constraint(1, 1)
         variables_colors = []
-        for c in inputs['colors']:
+        for c in colorsrange:
             # add one variable for each {node+color} pairs
             x = solver.BoolVar('x_n' + str(n) + '_c' + str(c))
             variables_colors.append(x)
-            # add to constraint 1)
+            # constraint 2): cap
+            # Add an artifical cap variable, y, that will be superior to the maximum color of the graph.
+            # Minimizing y will squash the max color to its minimal possible value, 
+            # which is equivalent to finding the optimal graph coloring. 
+            # By making y superior to each color value, we make y superior to the maximum color.
+            constraint_cap = solver.Constraint(0, solver.infinity()) 
+            constraint_cap.SetCoefficient(y, 1)
             constraint_cap.SetCoefficient(x, (-1)*c)
-            # add to constraint 2)
+            # add to constraint 1)
             constraint_unique_node_color.SetCoefficient(x, 1)
         variables.append(variables_colors)
 
+    LogInfo('Add constraints on adjacent nodes...')
     # constraint 3): adjacent nodes cannot have the same color
     for e in range(inputs['nbedges']):
-        for c in inputs['colors']:
+        if (e % 10000) == 0:
+            LogInfo('Adding constraint on edge ' + str(e) + '...')
+        startnodevariables = variables[inputs['startnodes'][e]]
+        endnodevariables = variables[inputs['endnodes'][e]]
+        for c in colorsrange:
             #print('Add constraint: color ', c, ': ', inputs['startnodes'][e], ' != ', inputs['endnodes'][e])
             constraint_adj_nodes = solver.Constraint(0, 1) 
-            constraint_adj_nodes.SetCoefficient(variables[inputs['startnodes'][e]][c], 1)
-            constraint_adj_nodes.SetCoefficient(variables[inputs['endnodes'][e]][c], 1)
-    
+            constraint_adj_nodes.SetCoefficient(startnodevariables[c], 1)
+            constraint_adj_nodes.SetCoefficient(endnodevariables[c], 1)
+        
     # Solve
     LogInfo('Start solving...')
     solver.Solve()
     LogInfo('Solver finished.')
-    
+        
     results = []
     for n in range(inputs['nbnodes']):
         results.append(-1)
-        for c in inputs['colors']:
+        for c in colorsrange:
             # print('node ', n, ', color ', c, ': ', )
             if 1 == variables[n][c].solution_value():
                 results[n] = int(c)
                 break
-    # objectiveValue = objective.Value()
-    objectiveValue = max(results)
+    LogInfo('Objective value of y=' + str(objective.Value()))
+    objectiveValue = max(results) + 1
 
     # Results
-    print('Number of variables =', solver.NumVariables())
-    print('Number of constraints =', solver.NumConstraints())
-    print('x = ', results)
-    print('Optimal objective value =', objectiveValue)
+    LogInfo('Number of variables =' + str(solver.NumVariables()))
+    LogInfo('Number of constraints =' + str(solver.NumConstraints()))
+    LogInfo('Variables values = ' + str(results))
+    LogInfo('Optimal objective value =' + str(objectiveValue))
 
     outputs = {}
     outputs['objective'] = int(objectiveValue)
     outputs['variables'] = results
     return outputs
-    
+
+
 def solve_it(input_data):
     # Modify this code to run your optimization algorithm
 
@@ -211,8 +213,7 @@ def solve_it(input_data):
 
     #greedyoutputs = RunGreedyAlgorithm(inputs['nodes'], inputs)
     #outputs = greedyoutputs
-    #outputs = RunSolver(inputs)
-    outputs = RunLinearSolver(inputs)
+    outputs = RunSolver(inputs)
     
     # prepare the solution in the specified output format
     output_data = str(outputs['objective']) + ' ' + str(0) + '\n'
