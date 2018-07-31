@@ -45,27 +45,17 @@ def GetGraphColoringLowerBound(inputs, node):
     neighbors = inputs['adjacentnodes'][node]
     # print('neighbors of ', node, ': ',neighbors)
     neighborsColors = {}
-    minColors = 1
-    maxColors = 0
-    uboundColors = 1 + len(neighbors)
+    minColors = 0
     for n in neighbors:
         neighborsneighbors = inputs['adjacentnodes'][n]
-        for c in range(1, uboundColors):
-            isAvailable = True
-            for nn in neighborsneighbors:
-                # if the neighbor's neighbor is already assigned to color c,
-                # then flag it as unavailable
-                if nn in neighborsColors:
-                    if neighborsColors[nn] == c:
-                        isAvailable = False
-                        break
-            if isAvailable:
-                neighborsColors[n] = c
-                if c > maxColors:
-                    maxColors = c
-                # print('color ', c, ' assigned to neighbor ', n)
-                break
-    return maxColors + 1
+        commonneighbors = 0
+        for nn in neighborsneighbors:
+            if nn != node: 
+                if nn in neighbors:
+                    commonneighbors += 1
+                if commonneighbors > minColors:
+                    minColors = commonneighbors
+    return minColors + 1
 
 # function to run the algorithm for a given, ordered, list of nodes 
 def RunGreedyAlgorithm(inputs):
@@ -88,6 +78,15 @@ def RunGreedyAlgorithm(inputs):
         sortedNodes.append(n[0])
     sortedNodes = sortedNodes[::-1]
     inputNodes = sortedNodes
+
+    # get lower bound on color number
+    LogInfo('Searching lower bound...')
+    lbound = 0
+    for n in inputNodes:
+        nlbound = GetGraphColoringLowerBound(inputs, n)
+        if nlbound > lbound:
+            lbound = nlbound
+    LogInfo('Lower bound found: ' + str(lbound))
     
     LogInfo('Loop on each node...')
     for node in inputNodes:
@@ -119,6 +118,7 @@ def RunGreedyAlgorithm(inputs):
     output = {}
     output['objective'] = len(set(nodecolors.values()))
     output['variables'] = list(nodecolors.values())
+    output['mincolors'] = lbound
     return output
 
 def RunSolver(inputs):
@@ -145,65 +145,60 @@ def RunSolver(inputs):
     LogInfo('Add variables...')
     variables = []
     for n in range(inputs['nbnodes']):
-        # constraint 1): each node must be assigned a unique color
-        constraint_unique_node_color = solver.Constraint(1, 1)
-        variables_colors = []
-        for c in colorsrange:
-            # add one variable for each {node+color} pairs
-            x = solver.BoolVar('x_n' + str(n) + '_c' + str(c))
-            variables_colors.append(x)
-            # constraint 2): cap
-            # Add an artifical cap variable, y, that will be superior to the maximum color of the graph.
-            # Minimizing y will squash the max color to its minimal possible value, 
-            # which is equivalent to finding the optimal graph coloring. 
-            # By making y superior to each color value, we make y superior to the maximum color.
-            constraint_cap = solver.Constraint(0, solver.infinity()) 
-            constraint_cap.SetCoefficient(y, 1)
-            constraint_cap.SetCoefficient(x, (-1)*c)
-            # add to constraint 1)
-            constraint_unique_node_color.SetCoefficient(x, 1)
-        variables.append(variables_colors)
+        x = solver.IntVar(0.0, maxcolors, 'x_' + str(n))
+        constraint_cap = solver.Constraint(0, solver.infinity()) 
+        constraint_cap.SetCoefficient(y, 1)
+        constraint_cap.SetCoefficient(x, (-1))
+        variables.append(x)
 
     LogInfo('Add constraints on adjacent nodes...')
-    # constraint 3): adjacent nodes cannot have the same color
+    epsilon = 0.1    # small value
+    M = 10000        # large value
     for e in range(inputs['nbedges']):
-        if (e % 10000) == 0:
-            LogInfo('Adding constraint on edge ' + str(e) + '...')
-        startnodevariables = variables[inputs['startnodes'][e]]
-        endnodevariables = variables[inputs['endnodes'][e]]
-        for c in colorsrange:
-            #print('Add constraint: color ', c, ': ', inputs['startnodes'][e], ' != ', inputs['endnodes'][e])
-            constraint_adj_nodes = solver.Constraint(0, 1) 
-            constraint_adj_nodes.SetCoefficient(startnodevariables[c], 1)
-            constraint_adj_nodes.SetCoefficient(endnodevariables[c], 1)
+        xs = variables[inputs['startnodes'][e]]
+        xe = variables[inputs['endnodes'][e]]
+        z = solver.BoolVar('xe_' + str(e))
+        
+        # artificial constraints to linearize inequalities xs <> xe 
+        # (start node <> end node for each edge):
+        # (1): xs - xe <= (-1)*epsilon + M*z
+        # (2): xs - xe >= epsilon - (1-z)*M
+        # is equivalent to
+        # (1): xs - xe - M*z <= (-1)*epsilon
+        # (2): xs - xe - M*z >= epsilon - M
+        
+        constraint_linearization_1 = solver.Constraint((-1)*solver.infinity(), (-1)*epsilon)
+        constraint_linearization_1.SetCoefficient(xs, 1.0)
+        constraint_linearization_1.SetCoefficient(xe, -1.0)
+        constraint_linearization_1.SetCoefficient(z, (-1.0)*M)
+        
+        constraint_linearization_2 = solver.Constraint(epsilon - M, solver.infinity())
+        constraint_linearization_2.SetCoefficient(xs, 1)
+        constraint_linearization_2.SetCoefficient(xe, -1)
+        constraint_linearization_2.SetCoefficient(z, (-1)*M)
         
     # Solve
+    LogInfo('Number of variables =' + str(solver.NumVariables()))
+    LogInfo('Number of constraints =' + str(solver.NumConstraints()))
     LogInfo('Start solving...')
     solver.Solve()
     LogInfo('Solver finished.')
         
     results = []
     for n in range(inputs['nbnodes']):
-        results.append(-1)
-        for c in colorsrange:
-            # print('node ', n, ', color ', c, ': ', )
-            if 1 == variables[n][c].solution_value():
-                results[n] = int(c)
-                break
-    LogInfo('Objective value of y=' + str(objective.Value()))
+        results.append(variables[n].solution_value())
+
+    print('Objective value of y=',objective.Value())
     objectiveValue = max(results) + 1
 
     # Results
-    LogInfo('Number of variables =' + str(solver.NumVariables()))
-    LogInfo('Number of constraints =' + str(solver.NumConstraints()))
-    LogInfo('Variables values = ' + str(results))
-    LogInfo('Optimal objective value =' + str(objectiveValue))
+    print('x = ', results)
+    print('Optimal objective value =', objectiveValue)
 
     outputs = {}
     outputs['objective'] = int(objectiveValue)
     outputs['variables'] = results
     return outputs
-
 
 def solve_it(input_data):
     # Modify this code to run your optimization algorithm
