@@ -19,6 +19,11 @@ namespace Solver
                     case "knapsack":
                         Knapsack.Run(inputFile);
                         break;
+
+                    case "coloring":
+                        Coloring instance = new Coloring();
+                        instance.Run(inputFile);
+                        break;
                 }
             }
             catch (Exception e)

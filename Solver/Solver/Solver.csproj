@@ -65,7 +65,8 @@
     <Reference Include="System.Xml" />
   </ItemGroup>
   <ItemGroup>
-    <Compile Include="Knapsack.cs" />
+    <Compile Include="coloring\Coloring.cs" />
+    <Compile Include="knapsack\Knapsack.cs" />
     <Compile Include="Program.cs" />
     <Compile Include="Properties\AssemblyInfo.cs" />
   </ItemGroup>
